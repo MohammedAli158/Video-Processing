@@ -3,26 +3,147 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Document</title>
+    <title>HLS Player</title>
+    <style>
+        body {
+            margin: 0;
+            background: #0f0f0f;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            font-family: monospace;
+        }
+
+        .player-wrapper {
+            position: relative;
+            width: 854px;
+        }
+
+        video {
+            width: 100%;
+            display: block;
+            background: #000;
+        }
+
+        .quality-bar {
+            display: flex;
+            gap: 8px;
+            padding: 10px 4px;
+            align-items: center;
+        }
+
+        .quality-label {
+            color: #666;
+            font-size: 12px;
+            margin-right: 4px;
+        }
+
+        .quality-btn {
+            background: #1e1e1e;
+            color: #888;
+            border: 1px solid #333;
+            padding: 5px 14px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 13px;
+            font-family: monospace;
+            transition: all 0.15s;
+        }
+
+        .quality-btn:hover {
+            border-color: #555;
+            color: #ccc;
+        }
+
+        .quality-btn.active {
+            background: #fff;
+            color: #000;
+            border-color: #fff;
+        }
+
+        .quality-btn:disabled {
+            opacity: 0.3;
+            cursor: not-allowed;
+        }
+    </style>
 </head>
 <body>
-    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
 
-<video id="video" controls></video>
+<div class="player-wrapper">
+    <video id="video" controls></video>
+    <div class="quality-bar">
+        <span class="quality-label">Quality:</span>
+        <button class="quality-btn" data-height="480">480p</button>
+        <button class="quality-btn" data-height="720">720p</button>
+        <button class="quality-btn" data-height="1080">1080p</button>
+    </div>
+</div>
 
+<script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
 <script>
-  const video = document.getElementById('video');
-  const video_id = prompt("Enter the video ID:");
-  const manifestUrl = `http://localhost:9000/js-test-bucket/videos/kHlhgmvCZB7g6udhvV7_S/master.m3u8`;
+    const video = document.getElementById('video');
+    const manifestUrl = `http://localhost:9000/js-test-bucket/videos/kHlhgmvCZB7g6udhvV7_S/master.m3u8`;
+    const qualityBtns = document.querySelectorAll('.quality-btn');
 
-  if (Hls.isSupported()) {
-    const hls = new Hls();
-    hls.loadSource(manifestUrl);
-    hls.attachMedia(video);
-  } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-    // Safari supports HLS natively
-    video.src = manifestUrl;
-  }
+    // Map height -> hls level index, populated after manifest is parsed
+    const heightToLevel = {};
+
+    function setActiveBtn(height) {
+        qualityBtns.forEach(btn => {
+            btn.classList.toggle('active', parseInt(btn.dataset.height) === height);
+        });
+    }
+
+    function applyQuality(height) {
+        const levelIndex = heightToLevel[height];
+        if (levelIndex === undefined) return;
+        hls.currentLevel = levelIndex; // -1 = auto, 0+ = forced
+        setActiveBtn(height);
+    }
+
+    if (Hls.isSupported()) {
+        const hls = new Hls();
+        hls.loadSource(manifestUrl);
+        hls.attachMedia(video);
+
+        hls.on(Hls.Events.MANIFEST_PARSED, (event, data) => {
+            // Build height -> level index map from available levels
+            data.levels.forEach((level, index) => {
+                heightToLevel[level.height] = index;
+            });
+
+            // Disable buttons for qualities not present in the manifest
+            qualityBtns.forEach(btn => {
+                const height = parseInt(btn.dataset.height);
+                if (heightToLevel[height] === undefined) {
+                    btn.disabled = true;
+                }
+            });
+
+            // Default: pick highest available among 480/720/1080
+            const preferred = [1080, 720, 480];
+            const defaultHeight = preferred.find(h => heightToLevel[h] !== undefined);
+            if (defaultHeight) applyQuality(defaultHeight);
+        });
+
+        // Keep button state in sync if hls auto-switches
+        hls.on(Hls.Events.LEVEL_SWITCHED, (event, data) => {
+            const level = hls.levels[data.level];
+            if (level) setActiveBtn(level.height);
+        });
+
+        qualityBtns.forEach(btn => {
+            btn.addEventListener('click', () => {
+                applyQuality(parseInt(btn.dataset.height));
+            });
+        });
+
+    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        // Safari native HLS — quality selection not available via JS
+        video.src = manifestUrl;
+    }
 </script>
 </body>
 </html>
